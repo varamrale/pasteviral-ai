@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  FREE
+  STARTER
+  CREATOR
+  AGENCY
+}
+
+enum Platform {
+  TIKTOK
+  INSTAGRAM
+  YOUTUBE
+  TWITTER
+}
+
+enum ReelStatus {
+  PENDING
+  PROCESSING
+  COMPLETE
+  FAILED
+  POSTED
+}
+
+enum TeamRole {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum ScheduleStatus {
+  PENDING
+  FIRED
+  FAILED
+}
+
+model User {
+  id                   String            @id @default(cuid())
+  email                String            @unique
+  name                 String?
+  avatarUrl            String?
+  passwordHash         String?
+  googleId             String?           @unique
+  facePhotoUrl         String?
+  faceConsentAt        DateTime?
+  faceConsentVersion   String?
+  elevenLabsVoiceId    String?
+  ayrshareProfileKey   String?
+  plan                 Plan              @default(FREE)
+  creditsRemaining     Int               @default(3)
+  niches               String[]
+  autoMode             Boolean           @default(false)
+  autoModeDelay        Int               @default(0)
+  autoModePaused       Boolean           @default(false)
+  termsAcceptedAt      DateTime?
+  termsVersion         String?
+  gdprConsentAt        DateTime?
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  createdAt            DateTime          @default(now())
+  lastLoginAt          DateTime?
+  reels                GeneratedReel[]
+  monitoredAccounts    MonitoredAccount[]
+  schedules            Schedule[]
+  auditLogs            AuditLog[]
+  workspaces           ClientWorkspace[]
+  teamMemberships      TeamMember[]
+  notificationSubs     NotificationSub[]
+  hookStats            UserHookStat[]
+  @@index([stripeCustomerId])
+  @@index([plan, creditsRemaining])
+}
+
+model GeneratedReel {
+  id                 String          @id @default(cuid())
+  userId             String
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceUrl          String
+  sourcePlatform     Platform
+  originalTranscript String?         @db.Text
+  upgradedScript     String?         @db.Text
+  selectedHook       String?         @db.Text
+  hookType           String?
+  similarityScore    Float?
+  faceSwapApplied    Boolean         @default(false)
+  voiceApplied       Boolean         @default(false)
+  videoUrl           String?
+  thumbnailUrl       String?
+  status             ReelStatus      @default(PENDING)
+  resolution         String?
+  durationSeconds    Float?
+  creditsUsed        Int             @default(1)
+  falJobId           String?
+  magicHourJobId     String?
+  elevenLabsJobId    String?
+  ayrsharePostId     String?
+  views1h            Int?
+  views6h            Int?
+  views24h           Int?
+  views7d            Int?
+  createdAt          DateTime        @default(now())
+  completedAt        DateTime?
+  postedAt           DateTime?
+  workspaceId        String?
+  workspace          ClientWorkspace? @relation(fields: [workspaceId], references: [id])
+  schedules          Schedule[]
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([workspaceId, createdAt(sort: Desc)])
+}
+
+model ViralReel {
+  id               String    @id @default(cuid())
+  platform         Platform
+  reelUrl          String    @unique
+  urlHash          String    @unique
+  creatorHandle    String?
+  viewCount        BigInt    @default(0)
+  likeCount        BigInt    @default(0)
+  commentCount     BigInt    @default(0)
+  shareCount       BigInt    @default(0)
+  velocityScore    Float     @default(0)
+  adjustedScore    Float     @default(0)
+  niche            String?
+  hookType         String?
+  hookOpeningWords String?
+  topHashtags      String[]
+  audioClusterId   String?
+  thumbnailUrl     String?
+  views24hAgo      BigInt    @default(0)
+  avgDailyViews7d  Float     @default(0)
+  firstSeenAt      DateTime  @default(now())
+  lastCheckedAt    DateTime  @default(now())
+  alertSent        Boolean   @default(false)
+  @@index([niche, adjustedScore(sort: Desc)])
+  @@index([platform, niche, firstSeenAt])
+}
+
+model MonitoredAccount {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform         Platform
+  handle           String
+  niche            String?
+  followerCount    BigInt    @default(0)
+  lastFetchedAt    DateTime?
+  avgDailyViews7d  Float     @default(0)
+  createdAt        DateTime  @default(now())
+  @@index([userId, platform])
+}
+
+model Schedule {
+  id           String         @id @default(cuid())
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reelId       String
+  reel         GeneratedReel  @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  platform     Platform
+  scheduledFor DateTime
+  status       ScheduleStatus @default(PENDING)
+  bullmqJobId  String?
+  createdAt    DateTime       @default(now())
+  @@index([scheduledFor, status])
+}
+
+model StripeEvent {
+  id          String   @id
+  processedAt DateTime @default(now())
+}
+
+model FailedJob {
+  id           String   @id @default(cuid())
+  queueName    String
+  jobId        String
+  payload      Json
+  errorMessage String
+  retryCount   Int      @default(0)
+  failedAt     DateTime @default(now())
+  userId       String?
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  action      String
+  metadata    Json     @default("{}")
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+  @@index([workspaceId, createdAt(sort: Desc)])
+}
+
+model ClientWorkspace {
+  id          String          @id @default(cuid())
+  ownerUserId String
+  owner       User            @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  name        String
+  logoUrl     String?
+  createdAt   DateTime        @default(now())
+  reels       GeneratedReel[]
+  members     TeamMember[]
+}
+
+model TeamMember {
+  id          String      @id @default(cuid())
+  workspaceId String
+  workspace   ClientWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberEmail String
+  role        TeamRole    @default(VIEWER)
+  inviteToken String?     @unique
+  acceptedAt  DateTime?
+  invitedAt   DateTime    @default(now())
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id])
+  @@index([workspaceId])
+}
+
+model UrlCache {
+  id         String   @id @default(cuid())
+  urlHash    String   @unique
+  platform   Platform
+  transcript String?  @db.Text
+  metadata   Json     @default("{}")
+  cachedAt   DateTime @default(now())
+  expiresAt  DateTime
+  @@index([urlHash, expiresAt])
+}
+
+model NotificationSub {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}
+
+model UserHookStat {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hookType         String
+  timesSelected    Int      @default(0)
+  avgViewsAchieved Float    @default(0)
+  createdAt        DateTime @default(now())
+  @@unique([userId, hookType])
+}
