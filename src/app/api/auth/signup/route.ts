@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { rateLimit } from '@/lib/rate-limit'
 import { logger } from '@/lib/logger'
+import { resendConfigured } from '@/auth.config'
 
 const signupSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -79,12 +80,12 @@ export async function POST(req: NextRequest) {
 
   logger.info('User registered', { userId: user.id })
 
-  if (process.env.RESEND_API_KEY) {
+  const verifyUrl = `${process.env.NEXTAUTH_URL}/auth/verify-email?email=${encodeURIComponent(email)}`
+
+  if (resendConfigured) {
     try {
       const { Resend } = await import('resend')
       const resend = new Resend(process.env.RESEND_API_KEY)
-
-      const verifyUrl = `${process.env.NEXTAUTH_URL}/auth/verify-email?email=${encodeURIComponent(email)}`
 
       await resend.emails.send({
         from: 'noreply@pasteviral.com',
@@ -100,6 +101,8 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       logger.error('Failed to send verification email', { error: err, userId: user.id })
     }
+  } else {
+    console.log(`[DEV] Verification email for ${email}: ${verifyUrl}`)
   }
 
   return NextResponse.json(

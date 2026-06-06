@@ -1,4 +1,5 @@
-import { auth } from '@/lib/auth'
+import NextAuth from 'next-auth'
+import { authConfig } from '@/auth.config'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
@@ -8,16 +9,16 @@ function isProtected(pathname: string): boolean {
   return PROTECTED_PATTERNS.some((p) => p.test(pathname))
 }
 
+const { auth } = NextAuth(authConfig)
+
 export default auth(function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
   const session = (req as NextRequest & { auth?: { user?: { id?: string } } }).auth
 
-  if (isProtected(pathname)) {
-    if (!session?.user?.id) {
-      const signInUrl = new URL('/auth/signin', req.url)
-      signInUrl.searchParams.set('callbackUrl', req.url)
-      return NextResponse.redirect(signInUrl)
-    }
+  if (isProtected(pathname) && !session?.user?.id) {
+    const signInUrl = new URL('/auth/signin', req.url)
+    signInUrl.searchParams.set('callbackUrl', req.url)
+    return NextResponse.redirect(signInUrl)
   }
 
   return NextResponse.next()
