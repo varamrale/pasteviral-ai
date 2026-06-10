@@ -3,19 +3,72 @@ import { Prisma } from '@prisma/client'
 import { pvQueue } from '../lib/redis'
 import { prisma } from '../lib/prisma'
 import { logger } from '../lib/logger'
+import { decrypt } from '../lib/crypto'
 
 interface PostJobData {
   userId: string
   postId: string
 }
 
+interface AyrsharePostResponse {
+  id?: string
+  status?: string
+}
+
 const QUEUE_NAME = 'pv-post'
+const HASHTAG = '#AIGenerated'
 
 const worker = new Worker<PostJobData>(
   QUEUE_NAME,
   async (job) => {
-    logger.info('Processing job', { jobId: job.id, jobName: job.name })
-    // TODO: Day 5 — Ayrshare posting
+    logger.info('Processing post job', { jobId: job.id, reelId: job.data.postId })
+
+    const reel = await prisma.generatedReel.findUnique({
+      where: { id: job.data.postId, userId: job.data.userId },
+      include: { user: { select: { ayrshareProfileKey: true } } },
+    })
+
+    if (!reel) throw new Error(`Reel ${job.data.postId} not found`)
+    if (!reel.videoUrl) throw new Error(`Reel ${reel.id} has no video URL`)
+    if (!reel.user.ayrshareProfileKey) throw new Error(`User ${job.data.userId} has no Ayrshare profile`)
+
+    const apiKey = process.env.AYRSHARE_API_KEY
+    if (!apiKey) throw new Error('AYRSHARE_API_KEY not configured')
+
+    const profileKey = decrypt(reel.user.ayrshareProfileKey)
+    const caption = `${reel.upgradedScript ?? ''} ${HASHTAG}`.trim()
+
+    const res = await fetch('https://app.ayrshare.com/api/post', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Profile-Key': profileKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        post: caption,
+        platforms: ['instagram', 'tiktok'],
+        mediaUrls: [reel.videoUrl],
+      }),
+    })
+
+    if (!res.ok) {
+      const err = (await res.json()) as { message?: string }
+      throw new Error(err.message ?? `Ayrshare post failed with status ${res.status}`)
+    }
+
+    const data = (await res.json()) as AyrsharePostResponse
+
+    await prisma.generatedReel.update({
+      where: { id: reel.id },
+      data: {
+        ayrsharePostId: data.id ?? null,
+        status: 'POSTED',
+        postedAt: new Date(),
+      },
+    })
+
+    logger.info('Reel posted', { reelId: reel.id, ayrsharePostId: data.id })
   },
   {
     connection: pvQueue,
