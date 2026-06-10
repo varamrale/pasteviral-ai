@@ -56,7 +56,12 @@ export function validateUrl(url: string): { valid: boolean; platform: Platform |
     return { valid: false, platform: null, error: 'Only HTTP/HTTPS URLs are allowed' }
   }
 
-  if (PRIVATE_IP_RE.test(parsed.hostname) || parsed.hostname === 'localhost') {
+  if (
+    PRIVATE_IP_RE.test(parsed.hostname) ||
+    parsed.hostname === 'localhost' ||
+    parsed.hostname === '::1' ||
+    parsed.hostname === '[::1]'
+  ) {
     return { valid: false, platform: null, error: 'Private or local addresses are not allowed' }
   }
 

@@ -96,24 +96,32 @@ const worker = new Worker<ViralJobData>(
       }
 
       const newViralReelIds: string[] = []
+      const validReels = reels.filter((r) => !!r.url)
 
-      for (const reel of reels) {
-        if (!reel.url) continue
+      // Batch urlCache upserts in parallel — eliminates N sequential awaits
+      const expiresAt = new Date(now.getTime() + CACHE_TTL_MS)
+      await Promise.all(
+        validReels.map((reel) => {
+          const urlHash = sha256(reel.url)
+          return prisma.urlCache.upsert({
+            where: { urlHash },
+            update: { expiresAt, cachedAt: now },
+            create: { urlHash, platform: 'INSTAGRAM', expiresAt },
+          })
+        }),
+      )
 
+      // Pre-fetch all existing hashes in one query — eliminates N findUnique calls
+      const allHashes = validReels.map((r) => sha256(r.url))
+      const existingReels = await prisma.viralReel.findMany({
+        where: { urlHash: { in: allHashes } },
+        select: { urlHash: true },
+      })
+      const existingHashes = new Set(existingReels.map((r) => r.urlHash))
+
+      for (const reel of validReels) {
         const urlHash = sha256(reel.url)
-        const expiresAt = new Date(now.getTime() + CACHE_TTL_MS)
-
-        await prisma.urlCache.upsert({
-          where: { urlHash },
-          update: { expiresAt, cachedAt: now },
-          create: { urlHash, platform: 'INSTAGRAM', expiresAt },
-        })
-
-        const existing = await prisma.viralReel.findUnique({
-          where: { urlHash },
-          select: { id: true },
-        })
-        if (existing) continue
+        if (existingHashes.has(urlHash)) continue
 
         const viewCount = reel.view_count ?? 0
         const views24hAgo = 0
@@ -150,11 +158,14 @@ const worker = new Worker<ViralJobData>(
         newViralReelIds.push(viralReel.id)
       }
 
-      for (const userId of userIds) {
-        for (const viralReelId of newViralReelIds) {
-          await pvNotifQueue.add('viral-spike', { userId, viralReelId, type: 'VIRAL_SPIKE' })
-        }
-      }
+      // Parallelize all notification queue adds — eliminates N×M sequential awaits
+      await Promise.all(
+        userIds.flatMap((userId) =>
+          newViralReelIds.map((viralReelId) =>
+            pvNotifQueue.add('viral-spike', { userId, viralReelId, type: 'VIRAL_SPIKE' }),
+          ),
+        ),
+      )
 
       logger.info('Niche processed', { niche, newReels: newViralReelIds.length })
     }

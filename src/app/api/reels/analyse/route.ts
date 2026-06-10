@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'crypto'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { pvSession } from '@/lib/redis'
+import { pvSession, pvCache } from '@/lib/redis'
 import { canonicalizeUrl, validateUrl } from '@/lib/url-parser'
 
 const CACHE_TTL_SECONDS = 21600 // 6 hours
@@ -84,35 +84,62 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  const [transcript, metadata] = await Promise.all([
-    fetchTranscript(canonicalUrl),
-    fetchMetadata(canonicalUrl),
-  ])
+  // SETNX lock prevents cache stampede: if 100 concurrent requests all miss
+  // the cache, only the first acquires the lock; the rest wait 500ms and
+  // re-hit the DB cache (which will be populated by then).
+  const lockKey = `lock:analyse:${urlHash}`
+  const lockAcquired = await pvCache.set(lockKey, '1', 'EX', 30, 'NX')
 
-  const expiresAt = new Date(Date.now() + CACHE_TTL_SECONDS * 1000)
+  if (!lockAcquired) {
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const recheck = await prisma.urlCache.findUnique({
+      where: { urlHash },
+      select: { platform: true, transcript: true, metadata: true, expiresAt: true },
+    })
+    if (recheck && recheck.expiresAt > new Date()) {
+      return NextResponse.json({
+        platform: recheck.platform,
+        transcript: recheck.transcript,
+        metadata: recheck.metadata,
+        cached: true,
+      })
+    }
+    return NextResponse.json({ error: 'Analysis in progress, please retry.' }, { status: 503 })
+  }
 
-  await prisma.urlCache.upsert({
-    where: { urlHash },
-    create: {
-      urlHash,
-      platform: validation.platform!,
+  try {
+    const [transcript, metadata] = await Promise.all([
+      fetchTranscript(canonicalUrl),
+      fetchMetadata(canonicalUrl),
+    ])
+
+    const expiresAt = new Date(Date.now() + CACHE_TTL_SECONDS * 1000)
+
+    await prisma.urlCache.upsert({
+      where: { urlHash },
+      create: {
+        urlHash,
+        platform: validation.platform!,
+        transcript,
+        metadata: metadata as object,
+        expiresAt,
+      },
+      update: {
+        platform: validation.platform!,
+        transcript,
+        metadata: metadata as object,
+        expiresAt,
+        cachedAt: new Date(),
+      },
+    })
+
+    return NextResponse.json({
+      platform: validation.platform,
       transcript,
-      metadata: metadata as object,
-      expiresAt,
-    },
-    update: {
-      platform: validation.platform!,
-      transcript,
-      metadata: metadata as object,
-      expiresAt,
-      cachedAt: new Date(),
-    },
-  })
-
-  return NextResponse.json({
-    platform: validation.platform,
-    transcript,
-    metadata,
-    cached: false,
-  })
+      metadata,
+      cached: false,
+    })
+  } finally {
+    await pvCache.del(lockKey)
+  }
 }

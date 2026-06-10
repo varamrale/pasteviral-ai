@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { pvVideoQueue } from '@/lib/queue'
-import { checkCredits, InsufficientCreditsError } from '@/lib/credits'
+import { checkAndDeductCredits, InsufficientCreditsError } from '@/lib/credits'
 import { validateUrl, canonicalizeUrl } from '@/lib/url-parser'
 
 const REEL_COST = 1
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await checkCredits(userId, REEL_COST)
+    await checkAndDeductCredits(userId, REEL_COST)
   } catch (err) {
     if (err instanceof InsufficientCreditsError) {
       return NextResponse.json({ error: err.message }, { status: 402 })

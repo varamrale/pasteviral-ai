@@ -7,7 +7,11 @@ import { logger } from '@/lib/logger'
 import { resendConfigured } from '@/auth.config'
 
 const signupSchema = z.object({
-  email: z.string().email('Invalid email address'),
+  email: z
+    .string()
+    .email('Invalid email address')
+    .max(254, 'Email too long')
+    .transform((v) => v.toLowerCase().trim()),
   password: z
     .string()
     .min(8, 'Password must be at least 8 characters')
@@ -59,9 +63,11 @@ export async function POST(req: NextRequest) {
   })
 
   if (existing) {
+    // Anti-enumeration: return identical success response so attackers cannot
+    // determine whether the address is registered.
     return NextResponse.json(
-      { success: false, error: 'An account with this email already exists.' },
-      { status: 409 }
+      { success: true, message: 'Check your email to verify your account.' },
+      { status: 201 }
     )
   }
 
