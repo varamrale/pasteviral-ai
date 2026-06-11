@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { pvVideoQueue } from '@/lib/queue'
-import { checkAndDeductCredits, InsufficientCreditsError } from '@/lib/credits'
+import { checkCredits, InsufficientCreditsError } from '@/lib/credits'
 import { validateUrl, canonicalizeUrl } from '@/lib/url-parser'
 
 const REEL_COST = 1
@@ -14,9 +14,9 @@ export async function POST(request: NextRequest) {
   }
   const userId = session.user.id
 
-  let body: { url?: unknown }
+  let body: { url?: unknown; generationMode?: unknown }
   try {
-    body = await request.json() as { url?: unknown }
+    body = await request.json() as { url?: unknown; generationMode?: unknown }
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
@@ -25,13 +25,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'url is required' }, { status: 400 })
   }
 
+  const generationMode = body.generationMode === 'faceless' ? 'faceless' : 'personal'
   const validation = validateUrl(body.url)
   if (!validation.valid) {
     return NextResponse.json({ error: validation.error }, { status: 400 })
   }
 
   try {
-    await checkAndDeductCredits(userId, REEL_COST)
+    await checkCredits(userId, REEL_COST)
   } catch (err) {
     if (err instanceof InsufficientCreditsError) {
       return NextResponse.json({ error: err.message }, { status: 402 })
@@ -72,12 +73,14 @@ export async function POST(request: NextRequest) {
       originalTranscript: analyseData.transcript ?? undefined,
       status: 'PENDING',
       creditsUsed: REEL_COST,
+      generationMode,
     },
   })
 
   const job = await pvVideoQueue.add('generate-reel', {
     reelId: reel.id,
     userId,
+    generationMode,
     sourceUrl: canonicalUrl,
     platform: validation.platform,
     transcript: analyseData.transcript,
