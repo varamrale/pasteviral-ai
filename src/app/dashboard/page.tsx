@@ -327,12 +327,12 @@ export default function DashboardPage() {
   const [sseProgress, setSseProgress] = useState(0)
   const [sseStage, setSseStage] = useState<string | null>(null)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
-  const esRef = useRef<EventSource | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   const stopSse = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close()
-      esRef.current = null
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
     }
   }, [])
 
@@ -340,35 +340,61 @@ export default function DashboardPage() {
 
   const startSse = useCallback((reelId: string) => {
     stopSse()
-    const es = new EventSource(`/api/reels/status/${reelId}`)
-    esRef.current = es
+    const controller = new AbortController()
+    abortRef.current = controller
 
-    es.onmessage = (event: MessageEvent) => {
-      const data = JSON.parse(event.data as string) as SsePayload
-      if (data.error) {
-        setError(data.error)
-        setPhase('error')
-        stopSse()
-        return
+    void (async () => {
+      try {
+        const res = await fetch(`/api/reels/status/${reelId}`, {
+          signal: controller.signal,
+          headers: { Accept: 'text/event-stream' },
+        })
+        if (!res.ok || !res.body) return
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const lines = buf.split('\n')
+          buf = lines.pop() ?? ''
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const raw = line.slice(6)
+            if (!raw.trim()) continue
+            let data: SsePayload
+            try {
+              data = JSON.parse(raw) as SsePayload
+            } catch {
+              continue
+            }
+            if (data.error) {
+              setError(data.error)
+              setPhase('error')
+              controller.abort()
+              return
+            }
+            if (data.progress !== undefined) setSseProgress(data.progress)
+            if (data.processingStage !== undefined) setSseStage(data.processingStage ?? null)
+            if (data.videoUrl) setVideoUrl(data.videoUrl)
+            if (data.status === 'COMPLETE') {
+              setSseProgress(100)
+              setPhase('done')
+              controller.abort()
+              return
+            } else if (data.status === 'FAILED') {
+              setError('Video generation failed. Please try again.')
+              setPhase('error')
+              controller.abort()
+              return
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as { name?: string }).name === 'AbortError') return
       }
-      if (data.progress !== undefined) setSseProgress(data.progress)
-      if (data.processingStage !== undefined) setSseStage(data.processingStage ?? null)
-      if (data.videoUrl) setVideoUrl(data.videoUrl)
-      if (data.status === 'COMPLETE') {
-        setSseProgress(100)
-        setPhase('done')
-        stopSse()
-      } else if (data.status === 'FAILED') {
-        setError('Video generation failed. Please try again.')
-        setPhase('error')
-        stopSse()
-      }
-    }
-
-    es.onerror = () => {
-      es.close()
-      esRef.current = null
-    }
+    })()
   }, [stopSse])
 
   const handleAnalyse = useCallback(async () => {
@@ -450,7 +476,7 @@ export default function DashboardPage() {
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleAnalyse()
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void handleAnalyse()
           }}
           placeholder="https://www.tiktok.com/@creator/video/..."
           rows={3}

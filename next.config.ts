@@ -5,6 +5,14 @@ const nextConfig: NextConfig = {
 
   serverExternalPackages: ["@prisma/client", "bcryptjs"],
 
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "**.r2.dev" },
+      { protocol: "https", hostname: "v2.fal.media" },
+      { protocol: "https", hostname: "storage.googleapis.com" },
+    ],
+  },
+
   async headers() {
     return [
       {

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 
 const POLL_INTERVAL_MS = 5_000
 const HEARTBEAT_INTERVAL_MS = 5_000
+const MAX_STREAM_MS = 10 * 60 * 1000
 
 const STAGE_PROGRESS: Record<string, number> = {
   generating: 20,
@@ -39,8 +40,9 @@ export async function GET(
         if (!request.signal.aborted) controller.enqueue(encoder.encode(':\n\n'))
       }
       const heartbeatTimer = setInterval(heartbeat, HEARTBEAT_INTERVAL_MS)
+      const deadline = Date.now() + MAX_STREAM_MS
       try {
-        while (!request.signal.aborted) {
+        while (!request.signal.aborted && Date.now() < deadline) {
           const reel = await prisma.generatedReel.findUnique({
             where: { id, userId: session.user!.id! },
             select: { status: true, videoUrl: true, processingStage: true, createdAt: true },

@@ -1,4 +1,4 @@
-import { Worker, Job, DelayedError } from 'bullmq'
+import { Worker, Job, DelayedError, UnrecoverableError } from 'bullmq'
 import { Prisma } from '@prisma/client'
 import { execSync } from 'child_process'
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'fs'
@@ -8,13 +8,18 @@ import { pvQueue } from '../lib/redis'
 import { pvVideoQueue, pvFaceQueue, pvVoiceQueue } from '../lib/queue'
 import { prisma } from '../lib/prisma'
 import { logger } from '../lib/logger'
-import { generateVideo, pollVideoJob } from '../lib/fal-client'
-import { uploadToR2 } from '../lib/r2-client'
+import { generateVideo, pollVideoJob, FalPermanentError } from '../lib/fal-client'
+import { uploadToR2, getPublicUrl } from '../lib/r2-client'
 import { checkAndDeductCredits, InsufficientCreditsError } from '../lib/credits'
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ffmpegBin: string = (require('ffmpeg-static') as string | null) ?? 'ffmpeg'
 
 const QUEUE_NAME = 'pv-video'
 const MAX_PER_USER = 3
 const REEL_COST = 1
+const PAID_ENDPOINT = '/fal-ai/kling-video/v1.6/standard/text-to-video'
+const FREE_ENDPOINT = '/fal-ai/wan/v2.1/text-to-video'
 
 interface VideoJobData {
   reelId: string
@@ -49,7 +54,7 @@ async function burnCaptions(inputBuffer: Buffer, transcript: string, reelId: str
     writeFileSync(inputPath, inputBuffer)
     writeFileSync(srtPath, buildSrt(transcript), 'utf-8')
     execSync(
-      `ffmpeg -i "${inputPath}" -vf subtitles="${srtPath}" -c:v libx264 -c:a aac -y "${outputPath}"`,
+      `"${ffmpegBin}" -i "${inputPath}" -vf subtitles="${srtPath}" -c:v libx264 -c:a aac -y "${outputPath}"`,
       { stdio: 'pipe' },
     )
     return readFileSync(outputPath)
@@ -93,22 +98,35 @@ const worker = new Worker<VideoJobData>(
     const script = reel.upgradedScript ?? reel.originalTranscript ?? reel.selectedHook ?? ''
 
     let falJobId = reel.falJobId
-    let endpoint: string
+    let endpoint = falMode === 'paid' ? PAID_ENDPOINT : FREE_ENDPOINT
 
-    if (falJobId) {
-      endpoint = falMode === 'paid'
-        ? '/fal-ai/kling-video/v1.6/standard/text-to-video'
-        : '/fal-ai/wan/v2.1/text-to-video'
-      logger.info('Resuming existing fal.ai job', { reelId, falJobId })
-    } else {
-      const submission = await generateVideo(script, reel.sourcePlatform, falMode)
+    if (!falJobId || falJobId === 'PENDING_FAL') {
+      // Write sentinel before submitting to prevent double-charge on worker crash/retry
+      await prisma.generatedReel.update({ where: { id: reelId }, data: { falJobId: 'PENDING_FAL' } })
+
+      let submission: Awaited<ReturnType<typeof generateVideo>>
+      try {
+        submission = await generateVideo(script, reel.sourcePlatform, falMode)
+      } catch (submitErr: unknown) {
+        if (submitErr instanceof FalPermanentError) {
+          await prisma.generatedReel.update({
+            where: { id: reelId },
+            data: { status: 'FAILED', processingStage: null },
+          })
+          throw new UnrecoverableError((submitErr as Error).message)
+        }
+        throw submitErr
+      }
+
       falJobId = submission.jobId
       endpoint = submission.endpoint
       await prisma.generatedReel.update({ where: { id: reelId }, data: { falJobId } })
       logger.info('fal.ai job submitted', { reelId, falJobId })
+    } else {
+      logger.info('Resuming existing fal.ai job', { reelId, falJobId })
     }
 
-    const pollResult = await pollVideoJob(falJobId, endpoint)
+    const pollResult = await pollVideoJob(falJobId!, endpoint)
     if (pollResult.status === 'FAILED' || !pollResult.videoUrl) {
       await prisma.generatedReel.update({
         where: { id: reelId },
@@ -130,7 +148,18 @@ const worker = new Worker<VideoJobData>(
     const finalBuffer = transcript ? await burnCaptions(videoBuffer, transcript, reelId) : videoBuffer
 
     const r2Key = `users/${userId}/reels/${reelId}.mp4`
-    const signedUrl = await uploadToR2(finalBuffer, r2Key, 'video/mp4')
+    let publicVideoUrl: string
+    try {
+      await uploadToR2(finalBuffer, r2Key, 'video/mp4')
+      publicVideoUrl = getPublicUrl(r2Key)
+    } catch (uploadErr: unknown) {
+      logger.error('R2 upload failed — marking reel as FAILED', { reelId, err: uploadErr })
+      await prisma.generatedReel.update({
+        where: { id: reelId },
+        data: { status: 'FAILED', processingStage: null },
+      })
+      throw uploadErr
+    }
 
     try {
       await checkAndDeductCredits(userId, REEL_COST)
@@ -149,7 +178,7 @@ const worker = new Worker<VideoJobData>(
     const generationMode = reel.generationMode ?? job.data.generationMode ?? 'personal'
     await prisma.generatedReel.update({
       where: { id: reelId },
-      data: { status: 'COMPLETE', videoUrl: signedUrl, completedAt: new Date(), processingStage: null },
+      data: { status: 'COMPLETE', videoUrl: publicVideoUrl, completedAt: new Date(), processingStage: null },
     })
     logger.info('Video generation complete', { reelId, generationMode })
 
@@ -159,7 +188,9 @@ const worker = new Worker<VideoJobData>(
         data: { processingStage: 'processing_face' },
       })
       await pvFaceQueue.add('face-swap', { reelId, userId })
-      await pvVoiceQueue.add('voice-clone', { reelId, userId })
+      if (process.env.ELEVENLABS_API_KEY) {
+        await pvVoiceQueue.add('voice-clone', { reelId, userId })
+      }
     }
   },
   {

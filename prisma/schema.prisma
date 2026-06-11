@@ -98,6 +98,8 @@ model GeneratedReel {
   durationSeconds    Float?
   creditsUsed        Int             @default(1)
   falJobId           String?
+  generationMode     String          @default("personal")
+  processingStage    String?
   magicHourJobId     String?
   elevenLabsJobId    String?
   ayrsharePostId     String?

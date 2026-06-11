@@ -4,6 +4,20 @@ const FREE_ENDPOINT = '/fal-ai/wan/v2.1/text-to-video'
 const POLL_INTERVAL_MS = 10_000
 const POLL_TIMEOUT_MS = 3 * 60 * 1000
 
+export class FalPermanentError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'FalPermanentError'
+  }
+}
+
+export class FalTimeoutError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'FalTimeoutError'
+  }
+}
+
 function falHeaders(): Record<string, string> {
   return {
     Authorization: `Key ${process.env.FAL_API_KEY ?? ''}`,
@@ -30,6 +44,9 @@ export async function generateVideo(
 
   if (!res.ok) {
     const text = await res.text()
+    if (res.status === 422) {
+      throw new FalPermanentError(`fal.ai content policy violation: ${text}`)
+    }
     throw new Error(`fal.ai submit failed ${res.status}: ${text}`)
   }
 
@@ -72,5 +89,5 @@ export async function pollVideoJob(
     await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS))
   }
 
-  throw new Error('fal.ai poll timed out after 3 minutes')
+  throw new FalTimeoutError('fal.ai poll timed out after 3 minutes')
 }
