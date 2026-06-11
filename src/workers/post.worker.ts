@@ -7,7 +7,7 @@ import { decrypt } from '../lib/crypto'
 
 interface PostJobData {
   userId: string
-  postId: string
+  reelId: string
 }
 
 interface AyrsharePostResponse {
@@ -21,16 +21,21 @@ const HASHTAG = '#AIGenerated'
 const worker = new Worker<PostJobData>(
   QUEUE_NAME,
   async (job) => {
-    logger.info('Processing post job', { jobId: job.id, reelId: job.data.postId })
+    logger.info('Processing post job', { jobId: job.id, reelId: job.data.reelId })
 
     const reel = await prisma.generatedReel.findUnique({
-      where: { id: job.data.postId, userId: job.data.userId },
+      where: { id: job.data.reelId, userId: job.data.userId },
       include: { user: { select: { ayrshareProfileKey: true } } },
     })
 
-    if (!reel) throw new Error(`Reel ${job.data.postId} not found`)
+    if (!reel) throw new Error(`Reel ${job.data.reelId} not found`)
     if (!reel.videoUrl) throw new Error(`Reel ${reel.id} has no video URL`)
     if (!reel.user.ayrshareProfileKey) throw new Error(`User ${job.data.userId} has no Ayrshare profile`)
+
+    if (reel.ayrsharePostId) {
+      logger.info('Already posted — idempotency skip', { reelId: reel.id, ayrsharePostId: reel.ayrsharePostId })
+      return
+    }
 
     const apiKey = process.env.AYRSHARE_API_KEY
     if (!apiKey) throw new Error('AYRSHARE_API_KEY not configured')

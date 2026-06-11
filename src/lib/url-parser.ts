@@ -20,7 +20,7 @@ const ALLOWED_HOSTS = new Map<string, Platform>([
   ['www.x.com', Platform.TWITTER],
 ])
 
-const PRIVATE_IP_RE = /^(127\.|10\.|192\.168\.|169\.254\.)/
+const PRIVATE_IP_RE = /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.)/
 
 export function canonicalizeUrl(url: string): string {
   try {

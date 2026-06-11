@@ -99,10 +99,16 @@ const worker = new Worker<FaceJobData>(
         where: { id: reelId },
         data: { processingStage: 'face_complete' },
       })
-      if (elevenLabsVoiceId) {
-        await pvVoiceQueue.add('voice-clone', { reelId, userId })
-      } else {
-        await pvPostQueue.add('post-reel', { reelId, userId })
+      try {
+        if (elevenLabsVoiceId) {
+          await pvVoiceQueue.add('voice-clone', { reelId, userId })
+        } else {
+          await pvPostQueue.add('post-reel', { reelId, userId })
+        }
+      } catch (queueErr) {
+        logger.error('Failed to queue next stage from face skip path', { reelId, err: queueErr })
+        await prisma.generatedReel.update({ where: { id: reelId }, data: { status: 'FAILED', processingStage: null } })
+        throw queueErr
       }
       return
     }
@@ -160,10 +166,16 @@ const worker = new Worker<FaceJobData>(
 
     logger.info('Face swap complete', { reelId })
 
-    if (elevenLabsVoiceId) {
-      await pvVoiceQueue.add('voice-clone', { reelId, userId })
-    } else {
-      await pvPostQueue.add('post-reel', { reelId, userId })
+    try {
+      if (elevenLabsVoiceId) {
+        await pvVoiceQueue.add('voice-clone', { reelId, userId })
+      } else {
+        await pvPostQueue.add('post-reel', { reelId, userId })
+      }
+    } catch (queueErr) {
+      logger.error('Failed to queue next stage after face swap', { reelId, err: queueErr })
+      await prisma.generatedReel.update({ where: { id: reelId }, data: { status: 'FAILED', processingStage: null } })
+      throw queueErr
     }
   },
   {

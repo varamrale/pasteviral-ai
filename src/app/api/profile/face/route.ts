@@ -12,6 +12,16 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024
 const CONSENT_VERSION = '1.0'
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png'])
 
+function hasMagicBytes(buffer: Buffer, mimeType: string): boolean {
+  if (mimeType === 'image/jpeg') {
+    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff
+  }
+  if (mimeType === 'image/png') {
+    return buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47
+  }
+  return false
+}
+
 export async function GET() {
   const session = await auth()
   if (!session?.user?.id) {
@@ -79,6 +89,9 @@ export async function POST(request: NextRequest) {
   const r2Key = `users/${userId}/face-${timestamp}.jpg`
 
   const buffer = Buffer.from(await photo.arrayBuffer())
+  if (!hasMagicBytes(buffer, photo.type)) {
+    return NextResponse.json({ error: 'File content does not match declared type' }, { status: 400 })
+  }
   const signedUrl = await uploadToR2(buffer, r2Key, photo.type)
 
   await prisma.user.update({

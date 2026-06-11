@@ -112,7 +112,7 @@ model GeneratedReel {
   completedAt        DateTime?
   postedAt           DateTime?
   workspaceId        String?
-  workspace          ClientWorkspace? @relation(fields: [workspaceId], references: [id])
+  workspace          ClientWorkspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   schedules          Schedule[]
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
@@ -172,6 +172,7 @@ model Schedule {
   bullmqJobId  String?
   createdAt    DateTime       @default(now())
   @@index([scheduledFor, status])
+  @@index([userId, scheduledFor(sort: Desc)])
 }
 
 model RazorpayEvent {
@@ -188,6 +189,7 @@ model FailedJob {
   retryCount   Int      @default(0)
   failedAt     DateTime @default(now())
   userId       String?
+  @@index([queueName, failedAt(sort: Desc)])
 }
 
 model AuditLog {
@@ -199,6 +201,7 @@ model AuditLog {
   metadata    Json     @default("{}")
   ipAddress   String?
   createdAt   DateTime @default(now())
+  @@index([userId, createdAt(sort: Desc)])
   @@index([workspaceId, createdAt(sort: Desc)])
 }
 

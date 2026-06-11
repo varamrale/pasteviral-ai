@@ -5,7 +5,7 @@ import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { pvQueue } from '../lib/redis'
-import { pvVideoQueue, pvFaceQueue, pvVoiceQueue } from '../lib/queue'
+import { pvVideoQueue, pvFaceQueue } from '../lib/queue'
 import { prisma } from '../lib/prisma'
 import { logger } from '../lib/logger'
 import { generateVideo, pollVideoJob, FalPermanentError } from '../lib/fal-client'
@@ -176,20 +176,23 @@ const worker = new Worker<VideoJobData>(
     }
 
     const generationMode = reel.generationMode ?? job.data.generationMode ?? 'personal'
+    const nextStage = generationMode === 'personal' ? 'processing_face' : null
     await prisma.generatedReel.update({
       where: { id: reelId },
-      data: { status: 'COMPLETE', videoUrl: publicVideoUrl, completedAt: new Date(), processingStage: null },
+      data: { status: 'COMPLETE', videoUrl: publicVideoUrl, completedAt: new Date(), processingStage: nextStage },
     })
     logger.info('Video generation complete', { reelId, generationMode })
 
     if (generationMode === 'personal') {
-      await prisma.generatedReel.update({
-        where: { id: reelId },
-        data: { processingStage: 'processing_face' },
-      })
-      await pvFaceQueue.add('face-swap', { reelId, userId })
-      if (process.env.ELEVENLABS_API_KEY) {
-        await pvVoiceQueue.add('voice-clone', { reelId, userId })
+      try {
+        await pvFaceQueue.add('face-swap', { reelId, userId })
+      } catch (queueErr) {
+        logger.error('Failed to queue face-swap job', { reelId, err: queueErr })
+        await prisma.generatedReel.update({
+          where: { id: reelId },
+          data: { status: 'FAILED', processingStage: null },
+        })
+        throw queueErr
       }
     }
   },

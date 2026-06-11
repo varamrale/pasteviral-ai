@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
     data: { ayrshareProfileKey: encryptedKey },
   })
 
-  return NextResponse.json({ success: true, profileKey: encryptedKey })
+  return NextResponse.json({ success: true })
 }
 
 export async function DELETE() {
