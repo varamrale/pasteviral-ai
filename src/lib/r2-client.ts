@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
@@ -62,4 +63,21 @@ export async function deleteFromR2(key: string): Promise<void> {
   await client.send(
     new DeleteObjectCommand({ Bucket: bucket(), Key: key }),
   )
+}
+
+export async function generateSignedUrl(key: string): Promise<string> {
+  const client = createClient()
+  return getSignedUrl(
+    client,
+    new GetObjectCommand({ Bucket: bucket(), Key: key }),
+    { expiresIn: SIGNED_URL_EXPIRY },
+  )
+}
+
+export async function listR2ObjectsByPrefix(prefix: string): Promise<string[]> {
+  const client = createClient()
+  const response = await client.send(
+    new ListObjectsV2Command({ Bucket: bucket(), Prefix: prefix }),
+  )
+  return (response.Contents ?? []).map((obj) => obj.Key ?? '').filter(Boolean)
 }

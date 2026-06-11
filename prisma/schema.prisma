@@ -51,6 +51,7 @@ model User {
   facePhotoUrl         String?
   faceConsentAt        DateTime?
   faceConsentVersion   String?
+  magicHourAssetId     String?
   elevenLabsVoiceId    String?
   ayrshareProfileKey   String?
   plan                 Plan              @default(FREE)
