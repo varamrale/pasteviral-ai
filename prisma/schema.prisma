@@ -77,6 +77,8 @@ model User {
   teamMemberships        TeamMember[]
   notificationSubs       NotificationSub[]
   hookStats              UserHookStat[]
+  contentRewards         ContentReward[]
+  earnedCredits          Int               @default(0)
   @@index([razorpayCustomerId])
   @@index([plan, creditsRemaining])
 }
@@ -110,12 +112,17 @@ model GeneratedReel {
   views6h            Int?
   views24h           Int?
   views7d            Int?
+  adMode             Boolean         @default(false)
+  productUrl         String?
+  productName        String?
+  adFormat           String?
   createdAt          DateTime        @default(now())
   completedAt        DateTime?
   postedAt           DateTime?
   workspaceId        String?
   workspace          ClientWorkspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   schedules          Schedule[]
+  contentRewards     ContentReward[]
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
   @@index([workspaceId, createdAt(sort: Desc)])
@@ -157,8 +164,12 @@ model MonitoredAccount {
   niche            String?
   followerCount    BigInt    @default(0)
   lastFetchedAt    DateTime?
-  avgDailyViews7d  Float     @default(0)
-  createdAt        DateTime  @default(now())
+  avgDailyViews7d      Float     @default(0)
+  youtubeChannelId     String?
+  autoClipEnabled      Boolean   @default(false)
+  autoClipMinViews     Int       @default(10000)
+  lastUploadedVideoId  String?
+  createdAt            DateTime  @default(now())
   @@index([userId, platform])
 }
 
@@ -262,4 +273,17 @@ model UserHookStat {
   avgViewsAchieved Float    @default(0)
   createdAt        DateTime @default(now())
   @@unique([userId, hookType])
+}
+
+model ContentReward {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reelId        String
+  reel          GeneratedReel @relation(fields: [reelId], references: [id], onDelete: Cascade)
+  views         Int           @default(0)
+  creditsEarned Int           @default(0)
+  paidOut       Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  @@index([userId, createdAt(sort: Desc)])
 }

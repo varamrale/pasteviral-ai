@@ -10,7 +10,7 @@ const REEL_COST = 1
 
 const reelSchema = z.object({
   url: z.string().min(1, 'url is required'),
-  generationMode: z.enum(['personal', 'faceless']).optional(),
+  generationMode: z.enum(['personal', 'faceless', 'reference']).optional(),
 }).strict()
 
 export async function POST(request: NextRequest) {

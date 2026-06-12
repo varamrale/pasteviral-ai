@@ -2,9 +2,10 @@ import { Worker } from 'bullmq'
 import { Prisma } from '@prisma/client'
 import { createHash } from 'crypto'
 import { pvQueue } from '../lib/redis'
-import { pvViralQueue, pvNotifQueue } from '../lib/queue'
+import { pvViralQueue, pvNotifQueue, pvVideoQueue } from '../lib/queue'
 import { prisma } from '../lib/prisma'
 import { logger } from '../lib/logger'
+import { calculateRewards } from '../lib/rewards'
 
 interface ViralJobData {
   type: 'cron'
@@ -169,6 +170,86 @@ const worker = new Worker<ViralJobData>(
 
       logger.info('Niche processed', { niche, newReels: newViralReelIds.length })
     }
+
+    // YouTube auto-clip: check monitored channels for new uploads
+    const ytApiKey = process.env.YOUTUBE_API_KEY
+    if (ytApiKey && ytApiKey !== 'not_configured_yet') {
+      const channels = await prisma.monitoredAccount.findMany({
+        where: { platform: 'YOUTUBE', autoClipEnabled: true, youtubeChannelId: { not: null } },
+        select: {
+          id: true,
+          userId: true,
+          youtubeChannelId: true,
+          autoClipMinViews: true,
+          lastUploadedVideoId: true,
+        },
+      })
+
+      for (const channel of channels) {
+        const channelId = channel.youtubeChannelId!
+        const cacheHash = sha256(`yt-channel:${channelId}`)
+        const now = new Date()
+
+        const cachedChannel = await prisma.urlCache.findFirst({
+          where: { urlHash: cacheHash, expiresAt: { gt: now } },
+          select: { id: true },
+        })
+
+        if (cachedChannel) continue
+
+        try {
+          const ytRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/search?part=id&channelId=${encodeURIComponent(channelId)}&order=date&type=video&maxResults=5&key=${ytApiKey}`,
+          )
+          if (!ytRes.ok) {
+            logger.warn('YouTube API error', { channelId, status: ytRes.status })
+            continue
+          }
+
+          interface YtSearchItem { id: { videoId?: string } }
+          interface YtSearchResponse { items?: YtSearchItem[] }
+          const ytBody = (await ytRes.json()) as YtSearchResponse
+          const videos = ytBody.items ?? []
+
+          const expiresAt = new Date(now.getTime() + CACHE_TTL_MS)
+          await prisma.urlCache.upsert({
+            where: { urlHash: cacheHash },
+            update: { expiresAt, cachedAt: now },
+            create: { urlHash: cacheHash, platform: 'YOUTUBE', expiresAt },
+          })
+
+          for (const video of videos) {
+            const videoId = video.id?.videoId
+            if (!videoId) continue
+            if (videoId === channel.lastUploadedVideoId) break
+
+            const videoUrl = `https://www.youtube.com/watch?v=${videoId}`
+            await pvVideoQueue.add('generate-reel', {
+              userId: channel.userId,
+              sourceUrl: videoUrl,
+              platform: 'YOUTUBE',
+              generationMode: 'faceless',
+            })
+
+            await prisma.monitoredAccount.update({
+              where: { id: channel.id },
+              data: { lastUploadedVideoId: videoId, lastFetchedAt: now },
+            })
+            break
+          }
+        } catch (err) {
+          logger.error('YouTube channel poll failed', { channelId, error: err })
+        }
+      }
+    }
+
+    // Calculate content rewards for recently posted reels
+    const postedReels = await prisma.generatedReel.findMany({
+      where: { status: 'POSTED', views24h: { gt: 0 } },
+      select: { id: true },
+      take: 100,
+    })
+    await Promise.allSettled(postedReels.map((r) => calculateRewards(r.id)))
 
     logger.info('Viral scan complete', { jobId: job.id })
   },
