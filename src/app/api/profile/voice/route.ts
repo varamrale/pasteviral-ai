@@ -17,8 +17,10 @@ function hasMagicBytes(buffer: Buffer, mimeType: string): boolean {
     if (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) return true
     return false
   }
-  // audio/webm — no strict magic bytes check
-  return true
+  if (mimeType === 'audio/webm') {
+    return buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3
+  }
+  return false
 }
 
 export async function GET() {

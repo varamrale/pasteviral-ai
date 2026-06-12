@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
-const VALID_FREQUENCIES = new Set([1, 3, 5])
+const autopilotSchema = z
+  .object({
+    autoMode: z.boolean().optional(),
+    autoModeFrequency: z
+      .union([z.literal(1), z.literal(3), z.literal(5)], {
+        errorMap: () => ({ message: 'autoModeFrequency must be 1, 3, or 5' }),
+      })
+      .optional(),
+    autoModePaused: z.boolean().optional(),
+  })
+  .strict()
 
 export async function GET() {
   const session = await auth()
@@ -56,11 +67,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  if (typeof body !== 'object' || body === null) {
-    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  const parsed = autopilotSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.errors[0]?.message ?? 'Invalid request' },
+      { status: 400 },
+    )
   }
 
-  const { autoMode, autoModeFrequency, autoModePaused } = body as Record<string, unknown>
+  const { autoMode, autoModeFrequency, autoModePaused } = parsed.data
 
   const update: {
     autoMode?: boolean
@@ -68,31 +83,16 @@ export async function POST(request: NextRequest) {
     autoModePaused?: boolean
   } = {}
 
-  if (autoMode !== undefined) {
-    if (typeof autoMode !== 'boolean') {
-      return NextResponse.json({ error: 'autoMode must be boolean' }, { status: 400 })
-    }
-    update.autoMode = autoMode
-  }
-
-  if (autoModeFrequency !== undefined) {
-    if (typeof autoModeFrequency !== 'number' || !VALID_FREQUENCIES.has(autoModeFrequency)) {
-      return NextResponse.json({ error: 'autoModeFrequency must be 1, 3, or 5' }, { status: 400 })
-    }
-    update.autoModeFrequency = autoModeFrequency
-  }
-
-  if (autoModePaused !== undefined) {
-    if (typeof autoModePaused !== 'boolean') {
-      return NextResponse.json({ error: 'autoModePaused must be boolean' }, { status: 400 })
-    }
-    update.autoModePaused = autoModePaused
-  }
+  if (autoMode !== undefined) update.autoMode = autoMode
+  if (autoModeFrequency !== undefined) update.autoModeFrequency = autoModeFrequency
+  if (autoModePaused !== undefined) update.autoModePaused = autoModePaused
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'No valid fields provided' }, { status: 400 })
   }
 
+  // Concurrent requests race at DB level (last-write-wins). Acceptable for
+  // low-frequency settings toggles — optimistic locking is not warranted here.
   await prisma.user.update({
     where: { id: session.user.id },
     data: update,

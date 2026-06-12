@@ -31,6 +31,7 @@ export default function VoicePage() {
   const chunksRef = useRef<Blob[]>([])
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const recordingStartRef = useRef<number>(0)
 
   async function fetchStatus() {
     try {
@@ -99,6 +100,13 @@ export default function VoicePage() {
 
     recorder.onstop = () => {
       stream.getTracks().forEach((t) => t.stop())
+      const durationSec = (Date.now() - recordingStartRef.current) / 1000
+      if (durationSec < 3) {
+        setError('Recording too short — please record at least 3 seconds')
+        setIsRecording(false)
+        setCountdown(RECORD_DURATION)
+        return
+      }
       const blob = new Blob(chunksRef.current, { type: mimeType })
       setRecordedBlob(blob)
       const url = URL.createObjectURL(blob)
@@ -108,6 +116,7 @@ export default function VoicePage() {
     }
 
     recorder.start(100)
+    recordingStartRef.current = Date.now()
     setIsRecording(true)
     setCountdown(RECORD_DURATION)
 
@@ -152,6 +161,10 @@ export default function VoicePage() {
 
   async function handleUpload() {
     if (!recordedBlob) return
+    if (recordedBlob.size > 10 * 1024 * 1024) {
+      setError('Recording exceeds 10 MB limit — please try a shorter recording')
+      return
+    }
     setIsUploading(true)
     setError(null)
 
@@ -368,9 +381,10 @@ export default function VoicePage() {
                 <button
                   type="button"
                   onClick={() => void handleDelete()}
-                  className="flex-1 rounded-xl bg-red-600 py-3 text-sm font-semibold text-white transition hover:bg-red-500 min-h-[44px]"
+                  disabled={isDeleting}
+                  className="flex-1 rounded-xl bg-red-600 py-3 text-sm font-semibold text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px]"
                 >
-                  Remove
+                  {isDeleting ? 'Removing…' : 'Remove'}
                 </button>
               </div>
             </div>

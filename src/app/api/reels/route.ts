@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { pvVideoQueue } from '@/lib/queue'
@@ -7,6 +8,11 @@ import { validateUrl, canonicalizeUrl } from '@/lib/url-parser'
 
 const REEL_COST = 1
 
+const reelSchema = z.object({
+  url: z.string().min(1, 'url is required'),
+  generationMode: z.enum(['personal', 'faceless']).optional(),
+}).strict()
+
 export async function POST(request: NextRequest) {
   const session = await auth()
   if (!session?.user?.id) {
@@ -14,19 +20,20 @@ export async function POST(request: NextRequest) {
   }
   const userId = session.user.id
 
-  let body: { url?: unknown; generationMode?: unknown }
+  let raw: unknown
   try {
-    body = await request.json() as { url?: unknown; generationMode?: unknown }
+    raw = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  if (typeof body.url !== 'string' || !body.url.trim()) {
-    return NextResponse.json({ error: 'url is required' }, { status: 400 })
+  const parsed = reelSchema.safeParse(raw)
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.errors[0]?.message ?? 'Invalid input' }, { status: 400 })
   }
 
-  const generationMode = body.generationMode === 'faceless' ? 'faceless' : 'personal'
-  const validation = validateUrl(body.url)
+  const generationMode = parsed.data.generationMode ?? 'personal'
+  const validation = validateUrl(parsed.data.url)
   if (!validation.valid) {
     return NextResponse.json({ error: validation.error }, { status: 400 })
   }
@@ -40,7 +47,7 @@ export async function POST(request: NextRequest) {
     throw err
   }
 
-  const canonicalUrl = canonicalizeUrl(body.url)
+  const canonicalUrl = canonicalizeUrl(parsed.data.url)
 
   const analyseRes = await fetch(
     new URL('/api/reels/analyse', request.url).toString(),

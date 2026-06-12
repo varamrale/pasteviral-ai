@@ -47,6 +47,10 @@ async function synthesizeSpeech(voiceId: string, script: string, apiKey: string)
     if (res.status === 422) {
       throw new UnrecoverableError(`ElevenLabs TTS input rejected: ${body.slice(0, 200)}`)
     }
+    if (res.status === 429) {
+      await new Promise((r) => setTimeout(r, 1000))
+      throw new Error('ElevenLabs TTS rate limited — will retry')
+    }
     throw new Error(`ElevenLabs TTS failed with status ${res.status}`)
   }
 
@@ -71,25 +75,20 @@ async function mergeAudioVideo(
   await writeFile(tmpVideo, videoBuffer)
   await writeFile(tmpAudio, audioBuffer)
 
-  await execFileAsync(ffmpegPath!, [
-    '-i', tmpVideo,
-    '-i', tmpAudio,
-    '-c:v', 'copy',
-    '-c:a', 'aac',
-    '-shortest',
-    '-y',
-    tmpOutput,
-  ])
-
-  const merged = await readFile(tmpOutput)
-
-  await Promise.all([
-    unlink(tmpVideo).catch(() => undefined),
-    unlink(tmpAudio).catch(() => undefined),
-    unlink(tmpOutput).catch(() => undefined),
-  ])
-
-  return merged
+  try {
+    await execFileAsync(
+      ffmpegPath!,
+      ['-i', tmpVideo, '-i', tmpAudio, '-c:v', 'copy', '-c:a', 'aac', '-shortest', '-y', tmpOutput],
+      { timeout: 120_000 },
+    )
+    return await readFile(tmpOutput)
+  } finally {
+    await Promise.all([
+      unlink(tmpVideo).catch(() => undefined),
+      unlink(tmpAudio).catch(() => undefined),
+      unlink(tmpOutput).catch(() => undefined),
+    ])
+  }
 }
 
 const worker = new Worker<VoiceJobData>(
@@ -140,12 +139,17 @@ const worker = new Worker<VoiceJobData>(
     const isPaidPlan = plan === 'STARTER' || plan === 'CREATOR' || plan === 'AGENCY'
     const voiceId = isPaidPlan && elevenLabsVoiceId ? elevenLabsVoiceId : defaultVoiceId
 
-    // Idempotency: write 'pending' BEFORE API call; real id written after success
-    if (!reel.elevenLabsJobId || reel.elevenLabsJobId === 'pending') {
-      await prisma.generatedReel.update({
-        where: { id: reelId },
+    // Atomic sentinel: only claim if elevenLabsJobId is still null.
+    // count=0 means another worker already claimed it — bail to avoid double-synthesis.
+    if (!reel.elevenLabsJobId) {
+      const claimed = await prisma.generatedReel.updateMany({
+        where: { id: reelId, elevenLabsJobId: null },
         data: { elevenLabsJobId: 'pending' },
       })
+      if (claimed.count === 0) {
+        logger.info('Voice job already claimed by another worker — skipping', { reelId })
+        return
+      }
     }
 
     const cacheKey = ttsCacheKey(voiceId, script)

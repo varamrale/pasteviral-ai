@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'crypto'
+import { z } from 'zod'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { pvSession, pvCache } from '@/lib/redis'
 import { canonicalizeUrl, validateUrl } from '@/lib/url-parser'
+
+const analyseSchema = z.object({ url: z.string().min(1, 'url is required') }).strict()
 
 const CACHE_TTL_SECONDS = 21600 // 6 hours
 const RATE_LIMIT_MAX = 10
@@ -51,23 +54,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Rate limit exceeded. Max 10 analyses per hour.' }, { status: 429 })
   }
 
-  let body: { url?: unknown }
+  let raw: unknown
   try {
-    body = await request.json() as { url?: unknown }
+    raw = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  if (typeof body.url !== 'string' || !body.url.trim()) {
-    return NextResponse.json({ error: 'url is required' }, { status: 400 })
+  const parsed = analyseSchema.safeParse(raw)
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.errors[0]?.message ?? 'Invalid input' }, { status: 400 })
   }
 
-  const validation = validateUrl(body.url)
+  const validation = validateUrl(parsed.data.url)
   if (!validation.valid) {
     return NextResponse.json({ error: validation.error }, { status: 400 })
   }
 
-  const canonicalUrl = canonicalizeUrl(body.url)
+  const canonicalUrl = canonicalizeUrl(parsed.data.url)
   const urlHash = createHash('sha256').update(canonicalUrl).digest('hex')
 
   const cached = await prisma.urlCache.findUnique({

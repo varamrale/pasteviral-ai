@@ -1,10 +1,20 @@
 import { createHash } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { pvCache } from '@/lib/redis'
 import { upgradeScript } from '@/lib/script-engine'
 import { generateHooks, HookVariant } from '@/lib/hook-engine'
+
+const scriptPostSchema = z.object({ reelId: z.string().min(1, 'reelId is required') }).strict()
+
+const scriptPatchSchema = z.object({
+  reelId: z.string().min(1, 'reelId is required'),
+  selectedHook: z.string().optional(),
+  hookType: z.string().optional(),
+  upgradedScript: z.string().optional(),
+}).strict()
 
 const SCRIPT_CACHE_TTL = 86400 // 24 hours
 
@@ -23,19 +33,20 @@ export async function POST(request: NextRequest) {
   }
   const userId = session.user.id
 
-  let body: { reelId?: unknown }
+  let raw: unknown
   try {
-    body = await request.json() as { reelId?: unknown }
+    raw = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  if (typeof body.reelId !== 'string' || !body.reelId.trim()) {
-    return NextResponse.json({ error: 'reelId is required' }, { status: 400 })
+  const parsedPost = scriptPostSchema.safeParse(raw)
+  if (!parsedPost.success) {
+    return NextResponse.json({ error: parsedPost.error.errors[0]?.message ?? 'Invalid input' }, { status: 400 })
   }
 
   const reel = await prisma.generatedReel.findUnique({
-    where: { id: body.reelId, userId },
+    where: { id: parsedPost.data.reelId, userId },
     select: {
       id: true,
       originalTranscript: true,
@@ -98,23 +109,26 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { reelId?: unknown; selectedHook?: unknown; hookType?: unknown; upgradedScript?: unknown }
+  let rawPatch: unknown
   try {
-    body = await request.json() as typeof body
+    rawPatch = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  if (typeof body.reelId !== 'string') {
-    return NextResponse.json({ error: 'reelId is required' }, { status: 400 })
+  const parsedPatch = scriptPatchSchema.safeParse(rawPatch)
+  if (!parsedPatch.success) {
+    return NextResponse.json({ error: parsedPatch.error.errors[0]?.message ?? 'Invalid input' }, { status: 400 })
   }
 
+  const { reelId, selectedHook, hookType, upgradedScript } = parsedPatch.data
+
   await prisma.generatedReel.updateMany({
-    where: { id: body.reelId, userId: session.user.id },
+    where: { id: reelId, userId: session.user.id },
     data: {
-      ...(typeof body.selectedHook === 'string' && { selectedHook: body.selectedHook }),
-      ...(typeof body.hookType === 'string' && { hookType: body.hookType }),
-      ...(typeof body.upgradedScript === 'string' && { upgradedScript: body.upgradedScript }),
+      ...(selectedHook !== undefined && { selectedHook }),
+      ...(hookType !== undefined && { hookType }),
+      ...(upgradedScript !== undefined && { upgradedScript }),
     },
   })
 
