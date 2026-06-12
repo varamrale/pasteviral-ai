@@ -53,6 +53,7 @@ model User {
   faceConsentVersion   String?
   magicHourAssetId     String?
   elevenLabsVoiceId    String?
+  voiceRecordingUrl    String?
   ayrshareProfileKey   String?
   plan                 Plan              @default(FREE)
   creditsRemaining     Int               @default(3)
@@ -60,6 +61,7 @@ model User {
   autoMode             Boolean           @default(false)
   autoModeDelay        Int               @default(0)
   autoModePaused       Boolean           @default(false)
+  autoModeFrequency    Int               @default(1)
   termsAcceptedAt      DateTime?
   termsVersion         String?
   gdprConsentAt        DateTime?
