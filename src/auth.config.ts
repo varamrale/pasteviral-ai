@@ -24,9 +24,17 @@ export const authConfig = {
       options: {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict' as const,
+        sameSite: 'lax' as const,
         path: '/',
       },
+    },
+  },
+  callbacks: {
+    session({ session, token }) {
+      if (token.sub) {
+        session.user.id = token.sub
+      }
+      return session
     },
   },
 } satisfies NextAuthConfig
