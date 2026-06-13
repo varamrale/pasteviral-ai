@@ -12,35 +12,21 @@ export async function calculateRewards(reelId: string): Promise<void> {
   const creditsEarned = Math.floor(reel.views24h / VIEWS_PER_CREDIT)
   if (creditsEarned === 0) return
 
-  const existing = await prisma.contentReward.findFirst({ where: { reelId } })
+  const existing = await prisma.contentReward.findUnique({ where: { reelId } })
+  if (existing?.paidOut) return
+  if (existing && creditsEarned <= existing.creditsEarned) return
 
-  if (existing) {
-    if (creditsEarned <= existing.creditsEarned) return
-    const delta = creditsEarned - existing.creditsEarned
-    await prisma.$transaction([
-      prisma.contentReward.update({
-        where: { id: existing.id },
-        data: { views: reel.views24h, creditsEarned },
-      }),
-      prisma.user.update({
-        where: { id: reel.userId },
-        data: { earnedCredits: { increment: delta } },
-      }),
-    ])
-  } else {
-    await prisma.$transaction([
-      prisma.contentReward.create({
-        data: {
-          userId: reel.userId,
-          reelId,
-          views: reel.views24h,
-          creditsEarned,
-        },
-      }),
-      prisma.user.update({
-        where: { id: reel.userId },
-        data: { earnedCredits: { increment: creditsEarned } },
-      }),
-    ])
-  }
+  const delta = creditsEarned - (existing?.creditsEarned ?? 0)
+
+  await prisma.$transaction([
+    prisma.contentReward.upsert({
+      where: { reelId },
+      create: { userId: reel.userId, reelId, views: reel.views24h, creditsEarned },
+      update: { views: reel.views24h, creditsEarned },
+    }),
+    prisma.user.update({
+      where: { id: reel.userId },
+      data: { earnedCredits: { increment: delta } },
+    }),
+  ])
 }

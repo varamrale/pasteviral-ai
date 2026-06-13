@@ -243,13 +243,16 @@ const worker = new Worker<ViralJobData>(
       }
     }
 
-    // Calculate content rewards for recently posted reels
+    // Calculate content rewards for recently posted reels (batched to cap concurrent DB connections)
     const postedReels = await prisma.generatedReel.findMany({
       where: { status: 'POSTED', views24h: { gt: 0 } },
       select: { id: true },
       take: 100,
     })
-    await Promise.allSettled(postedReels.map((r) => calculateRewards(r.id)))
+    const BATCH_SIZE = 10
+    for (let i = 0; i < postedReels.length; i += BATCH_SIZE) {
+      await Promise.allSettled(postedReels.slice(i, i + BATCH_SIZE).map((r) => calculateRewards(r.id)))
+    }
 
     logger.info('Viral scan complete', { jobId: job.id })
   },

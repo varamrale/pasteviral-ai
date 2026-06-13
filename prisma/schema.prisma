@@ -285,5 +285,6 @@ model ContentReward {
   creditsEarned Int           @default(0)
   paidOut       Boolean       @default(false)
   createdAt     DateTime      @default(now())
+  @@unique([reelId])
   @@index([userId, createdAt(sort: Desc)])
 }

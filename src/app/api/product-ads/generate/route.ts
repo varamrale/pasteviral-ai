@@ -8,7 +8,7 @@ import { validateUrl } from '@/lib/url-parser'
 const generateAdSchema = z.object({
   productUrl: z.string().min(1),
   productName: z.string().min(1).max(100),
-  adFormat: z.enum(['ugc', 'demo', 'testimonial', 'comparison']),
+  adFormat: z.enum(['talking_head', 'unboxing', 'tutorial', 'before_after', 'problem_solution', 'trending_hook']),
 }).strict()
 
 export async function POST(request: NextRequest) {

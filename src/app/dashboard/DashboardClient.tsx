@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
+import { useRouter } from 'next/navigation'
 
 // --- Types ---
 type UserData = { plan: string; creditsRemaining: number; earnedCredits: number }
@@ -377,6 +378,7 @@ function TrendingCard({ reel, onUse }: { reel: TrendingReel; onUse: (url: string
 }
 
 function Sidebar({ user, topHookStat }: { user: UserData; topHookStat: HookStat }) {
+  const isUnlimited = user.plan === 'AGENCY'
   const totalCredits = PLAN_CREDITS[user.plan] ?? 3
   const tip = topHookStat
     ? `Your "${topHookStat.hookType}" hook performs best — avg ${formatViews(Math.round(topHookStat.avgViewsAchieved))} views. Use it today!`
@@ -409,7 +411,17 @@ function Sidebar({ user, topHookStat }: { user: UserData; topHookStat: HookStat 
           </span>
         </div>
 
-        <CreditRing remaining={user.creditsRemaining} total={totalCredits} />
+        {isUnlimited ? (
+          <div className="flex flex-col items-center gap-1">
+            <svg width="88" height="88" viewBox="0 0 88 88" aria-hidden="true">
+              <circle cx="44" cy="44" r="36" fill="none" stroke="#6366f1" strokeWidth="8" />
+              <text x="44" y="44" textAnchor="middle" dy="0.35em" fill="white" fontSize="20" fontWeight="bold">∞</text>
+            </svg>
+            <p className="text-xs text-gray-400">Unlimited credits</p>
+          </div>
+        ) : (
+          <CreditRing remaining={user.creditsRemaining} total={totalCredits} />
+        )}
 
         <div className="rounded-xl border border-purple-700/40 bg-purple-900/30 p-3">
           <p className="text-xs leading-relaxed text-purple-200">{tip}</p>
@@ -453,6 +465,7 @@ export function DashboardClient({
   const [sseStage, setSseStage] = useState<string | null>(null)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const router = useRouter()
 
   const stopSse = useCallback(() => {
     abortRef.current?.abort()
@@ -491,7 +504,7 @@ export function DashboardClient({
             if (data.progress !== undefined) setSseProgress(data.progress)
             if (data.processingStage !== undefined) setSseStage(data.processingStage ?? null)
             if (data.videoUrl) setVideoUrl(data.videoUrl)
-            if (data.status === 'COMPLETE') { setSseProgress(100); setPhase('done'); controller.abort(); return }
+            if (data.status === 'COMPLETE') { setSseProgress(100); setPhase('done'); controller.abort(); router.refresh(); return }
             if (data.status === 'FAILED') { setError('Video generation failed.'); setPhase('error'); controller.abort(); return }
           }
         }
